@@ -1,0 +1,23 @@
+# Sentry Dependencies - OpenCV AI Competition 2026
+# Verified and tested on Windows x86_64 environment
+# OpenCV 5.x is strictly required (cv2.__version__ == 5.0.0)
+
+# Core Computer Vision & Numerical Computing
+opencv-python-headless==5.0.0.93
+numpy==2.5.4
+pandas==3.0.2
+scikit-learn==1.8.0
+scikit-image==0.26.0
+
+
+# API & Web Application
+fastapi==0.142.2
+uvicorn==0.54.0
+streamlit==1.65.0
+requests==2.33.1
+
+# Cloud Storage & Logging (AWS Integration)
+boto3==1.43.112
+
+# Development & Automated Testing
+pytest==9.1.1

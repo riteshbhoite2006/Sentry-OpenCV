@@ -1,0 +1,76 @@
+# ============================================================
+# docker-compose.yml  --  Sentry two-service stack
+#
+# Plain-language explanation:
+#   Two services share a private Docker network "sentry-net".
+#
+#   api       -> FastAPI backend. NOT bound to any host port;
+#                only reachable by the dashboard inside sentry-net.
+#                The EC2 security group never needs to open port 8000.
+#
+#   dashboard -> Streamlit frontend. Port 8501 is the only port
+#                published to the EC2 host (and the internet).
+#                Judges open http://<EC2-IP>:8501 in a browser.
+#
+#   Both services restart automatically unless explicitly stopped.
+#
+# Optional environment variables (set in a .env file):
+#   S3_BUCKET             - S3 bucket name for result persistence
+#   RATE_LIMIT_PER_MINUTE - per-IP rate limit (default 20 req/min)
+#   SENTRY_API_URL        - override the API URL seen by Streamlit
+# ============================================================
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: sentry-api:latest
+    container_name: sentry-api
+    restart: unless-stopped
+    networks:
+      - sentry-net
+    # No host-port binding: only reachable inside sentry-net
+    environment:
+      - S3_BUCKET=${S3_BUCKET:-}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-20}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-20}
+    healthcheck:
+      # FIX: the old version put "CMD-SHELL" inside a plain string, so the
+      # shell tried to run a program called CMD-SHELL (exit code 127).
+      # Correct form: a YAML list that starts with "CMD" and then the program
+      # and its arguments. Python urllib is used because the slim image has
+      # no curl. 127.0.0.1 is used instead of "localhost" to avoid IPv6 issues.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=6); sys.exit(0 if r.status==200 else 1)"
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 35s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    image: sentry-dashboard:latest
+    container_name: sentry-dashboard
+    restart: unless-stopped
+    networks:
+      - sentry-net
+    ports:
+      - "8501:8501"    # Only port exposed to the world
+    environment:
+      # app.py reads SENTRY_API_URL (defaults to http://localhost:8000).
+      # Inside Docker the api service is reachable at http://api:8000.
+      - SENTRY_API_URL=${SENTRY_API_URL:-http://api:8000}
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  sentry-net:
+    driver: bridge

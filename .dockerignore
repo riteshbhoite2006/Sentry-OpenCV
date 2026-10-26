@@ -1,0 +1,48 @@
+# ============================================================
+# .dockerignore  --  files excluded from Docker build context
+#
+# Keeps the build context small and prevents secrets from
+# being copied into any image layer.
+# ============================================================
+
+# Local datasets (large; never needed in the image)
+data/
+
+# Git metadata
+.git/
+.gitignore
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Secrets and credentials (NEVER in an image)
+.env
+.env.*
+*.pem
+.aws/
+
+# Test artefacts and caches
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.log
+
+# IDE configs
+.idea/
+.vscode/
+*.swp
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Evaluation outputs and notebooks (not needed at runtime)
+eval/

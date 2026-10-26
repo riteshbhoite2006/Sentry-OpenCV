@@ -1,0 +1,60 @@
+# ============================================================
+# Dockerfile.api  --  Sentry FastAPI inspection service
+#
+# Plain-language explanation:
+#   1. python:3.13-slim matches the local Python 3.13 version.
+#   2. Installs libgl1 / libglib2.0-0 / libgomp1 required by
+#      opencv-python-headless on Debian-based images.
+#   3. Installs pinned Python dependencies from requirements.txt.
+#   4. Build-time OpenCV gate: build FAILS immediately if
+#      cv2.__version__ does not start with "5".
+#   5. Copies only the application source (src/). Tests are not
+#      needed at runtime and are excluded.
+#   6. Drops to non-root user "sentry" (uid 1001).
+#   7. Runs uvicorn on 0.0.0.0:8000 with ONE worker, so the in-memory
+#      rate limiter and any in-memory state stay consistent.
+#   8. HEALTHCHECK uses Python urllib (no curl in the slim image) and
+#      127.0.0.1 (avoids localhost resolving to IPv6).
+# ============================================================
+
+FROM python:3.13-slim AS base
+
+# System libs required by opencv-python-headless
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user before installing deps so the image layer
+# is shared with the streamlit image
+RUN groupadd --gid 1001 sentry \
+ && useradd  --uid 1001 --gid sentry --no-create-home --shell /bin/false sentry
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Build-time OpenCV 5.x version gate -- fails the build if wrong version
+RUN python -c "import cv2, sys; ver=cv2.__version__; ok=ver.startswith('5'); \
+    print('OpenCV', ver, 'OK' if ok else 'FAIL'); sys.exit(0 if ok else 1)"
+
+# Copy only runtime source -- tests/ is not needed inside the image
+COPY src/ ./src/
+
+# Drop privileges
+USER sentry
+
+EXPOSE 8000
+
+# HEALTHCHECK: exec (JSON list) form, single line, no shell quoting problems.
+# start-period=35s gives uvicorn + OpenCV import time to fully initialise.
+HEALTHCHECK --interval=15s --timeout=8s --start-period=35s --retries=5 \
+    CMD ["python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=6); sys.exit(0 if r.status==200 else 1)"]
+
+# Run uvicorn without an external log-config file (the old
+# "--log-config /dev/null" crashed the container).
+# The application JSON logs (request_id, verdict, etc.) are written by
+# src/api/main.py and are unaffected.
+CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--log-level", "warning", "--no-access-log"]

@@ -1,0 +1,49 @@
+﻿# ============================================================
+# Dockerfile.streamlit  --  Sentry Streamlit dashboard
+#
+# Plain-language explanation:
+#   Same slim Python 3.13 base as the API so Docker layer cache
+#   is shared between the two builds.
+#   Streamlit reads SENTRY_API_URL from the environment to know
+#   where to find the FastAPI backend (default: http://api:8000,
+#   the Docker-internal hostname set in docker-compose.yml).
+#   Only port 8501 is published to the host / internet.
+# ============================================================
+
+FROM python:3.13-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1001 sentry \
+ && useradd  --uid 1001 --gid sentry --no-create-home --shell /bin/false sentry
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Build-time OpenCV 5.x gate
+RUN python -c "import cv2, sys; ver=cv2.__version__; ok=ver.startswith('5'); \
+    print('OpenCV', ver, 'OK' if ok else 'FAIL'); sys.exit(0 if ok else 1)"
+
+# Copy the dashboard entry point and the shared src/ package
+COPY app.py .
+COPY src/ ./src/
+
+USER sentry
+
+EXPOSE 8501
+
+# HEALTHCHECK: python urllib, no curl needed.
+# Streamlit exposes a lightweight health endpoint at /_stcore/health.
+# start-period=40s gives Streamlit time to finish its own startup sequence.
+HEALTHCHECK --interval=20s --timeout=8s --start-period=40s --retries=5 \
+    CMD python -c "import urllib.request, sys; \
+r = urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=6); \
+sys.exit(0 if r.status == 200 else 1)"
+
+CMD ["python", "-m", "streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true", "--browser.gatherUsageStats=false"]
